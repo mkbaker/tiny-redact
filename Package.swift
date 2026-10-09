@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "TinyRedact",
             path: "Sources/TinyRedact"
-        )
+        ),
+        .testTarget(
+            name: "TinyRedactTests",
+            dependencies: ["TinyRedact"],
+            path: "Tests/TinyRedactTests"
+        ),
     ]
 )
