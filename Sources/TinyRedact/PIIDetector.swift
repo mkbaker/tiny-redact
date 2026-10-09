@@ -58,9 +58,7 @@ enum PIIDetector {
                 .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters))
             guard !text.isEmpty, !never.contains(text.lowercased()) else { return }
             guard let r = rect(line, range) else { return }
-            // Skip if an existing box already covers this one.
-            if out.contains(where: { coverage(of: r, by: $0.rect) > 0.8 }) { return }
-            out.append(Detection(rect: r, kind: kind, text: text))
+            merge(Detection(rect: r, kind: kind, text: text), into: &out)
         }
 
         // 1. Things you told it to always hide (customer names, company, etc.)
@@ -224,6 +222,19 @@ enum PIIDetector {
     }
 
     // MARK: - Helpers
+
+    /// Adds `d`, or folds it into an existing box that already covers most of it. The existing box grows to the
+    /// union so a near-duplicate never shrinks what gets covered ("Christopher Alexander" found first must not
+    /// leave the "Wu" of a later "Christopher Alexander Wu" visible).
+    static func merge(_ d: Detection, into out: inout [Detection]) {
+        guard let i = out.firstIndex(where: { coverage(of: d.rect, by: $0.rect) > 0.8 }) else {
+            out.append(d)
+            return
+        }
+        out[i].rect = out[i].rect.union(d.rect)
+        // Take the fuller text ("…Alexander Wu") so labelling and propagation see every part of the name.
+        if d.text.count > out[i].text.count, d.text.contains(out[i].text) { out[i].text = d.text }
+    }
 
     static func coverage(of a: CGRect, by b: CGRect) -> CGFloat {
         let i = a.intersection(b)
