@@ -4,7 +4,6 @@ import Foundation
 /// Handy for checking what gets caught on a sample screenshot without the UI.
 enum CLI {
     static func run(input: String, output: String) -> Int32 {
-        Prefs.register()
         guard let image = ImageLoader.load(URL(fileURLWithPath: input)) else {
             FileHandle.standardError.write("Couldn't read \(input)\n".data(using: .utf8)!)
             return 1

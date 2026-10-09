@@ -12,14 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var busy = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Prefs.register()
         installEditMenu()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         setIcon(busy: false)
 
         let menu = NSMenu()
-        menu.addItem(item("Capture Redacted Screenshot", #selector(captureRegion), "r", [.control, .option, .command]))
+        let capture = item("Capture Redacted Screenshot", #selector(captureRegion), "r", [.control, .option, .command])
+        menu.addItem(capture)
         menu.addItem(item("Redact Image on Clipboard", #selector(redactClipboard)))
         menu.addItem(item("Redact Image File…", #selector(redactFile)))
         menu.addItem(.separator())
@@ -30,6 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKey = HotKey(keyCode: UInt32(kVK_ANSI_R), modifiers: UInt32(cmdKey | optionKey | controlKey)) { [weak self] in
             self?.captureRegion()
         }
+        // Say so where the shortcut is advertised rather than having it silently do nothing.
+        if hotKey == nil {
+            capture.title += " (⌃⌥⌘R unavailable)"
+        } else if hotKey?.shared == true {
+            capture.title += " (⌃⌥⌘R may be taken by another app)"
+        }
 
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
     }
@@ -37,28 +43,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Sources
 
     @objc func captureRegion() {
-        if let review { review.window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
-        guard !busy else { return }
+        guard begin() else { return }
         guard CGPreflightScreenCaptureAccess() else {
+            busy = false
             CGRequestScreenCaptureAccess()
             alert("TinyRedact needs Screen Recording permission",
                   "Turn it on in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen TinyRedact.")
             return
         }
-        busy = true
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("tinyredact-\(UUID().uuidString).png")
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         // -i interactive (drag a region, Space toggles window mode, Esc cancels), -x no sound
         p.arguments = ["-i", "-x", url.path]
-        p.terminationHandler = { [weak self] _ in
+        p.terminationHandler = { [weak self] process in
+            // screencapture exits 1 when the user presses Esc, so only a crash or any other status is a failure.
+            let failed = process.terminationReason == .uncaughtSignal || ![0, 1].contains(process.terminationStatus)
+            let status = process.terminationStatus
             Task { @MainActor in
                 // Read the original into memory, then delete it right away so it never lingers on disk.
                 let image = ImageLoader.load(url)
                 try? FileManager.default.removeItem(at: url)
+                if let image { self?.process(image); return }
                 self?.busy = false
-                if let image { self?.process(image) } // nil = user pressed Esc
+                if failed {
+                    self?.alert("Screen capture failed",
+                                "screencapture stopped unexpectedly (status \(status)). Check Screen Recording permission in System Settings → Privacy & Security.")
+                }
             }
         }
         do { try p.run() } catch {
@@ -68,24 +80,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func redactClipboard() {
+        guard begin() else { return }
         let pb = NSPasteboard.general
         guard let data = pb.data(forType: .png) ?? pb.data(forType: .tiff),
               let image = ImageLoader.load(data)
-        else { alert("There's no image on the clipboard."); return }
+        else { busy = false; alert("There's no image on the clipboard."); return }
         process(image)
     }
 
     @objc func redactFile() {
+        guard begin() else { return }
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard let image = ImageLoader.load(url) else { alert("Couldn't open that image."); return }
+        guard panel.runModal() == .OK, let url = panel.url else { busy = false; return }
+        guard let image = ImageLoader.load(url) else { busy = false; alert("Couldn't open that image."); return }
         process(image)
     }
 
     // MARK: - Pipeline
+
+    /// Only one image goes through the pipeline at a time: a second one would replace the open review window
+    /// and lose it. Brings that window forward instead. On success the caller owns `busy` and must clear it
+    /// on every exit path; `process` clears it once the image reaches the review window or the clipboard.
+    private func begin() -> Bool {
+        if let review {
+            review.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return false
+        }
+        guard !busy else { return false }
+        busy = true
+        return true
+    }
 
     private func process(_ image: CGImage) {
         setIcon(busy: true)
@@ -94,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Fail closed: if OCR breaks we know nothing about the image, so never hand it on as if it were clean.
             let result = Result { try PIIDetector.detect(in: image, options: options) }
             Task { @MainActor in
+                self?.busy = false
                 self?.setIcon(busy: false)
                 switch result {
                 case .success(let detections):
@@ -112,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let model = ReviewModel(image: image, detections: detections, drawLabels: Prefs.labels)
         let controller = ReviewWindowController(model: model) { [weak self] result in
-            self?.review = nil
+            if self?.review?.model === model { self?.review = nil }
             if let result { self?.deliver(result.image, result.detections, labels: result.drawLabels) }
         }
         review = controller
@@ -124,25 +153,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func deliver(_ image: CGImage, _ detections: [Detection], labels: Bool) {
         guard let out = Redactor.render(image, detections: detections, drawLabels: labels),
               let png = Redactor.png(out)
-        else { NSSound.beep(); return }
+        else { alert("Couldn't create the redacted image — nothing was copied"); return }
 
+        // The Pop means "it's on your clipboard (and saved)", so only play it when every step worked.
+        var ok = true
         let pb = NSPasteboard.general
         pb.declareTypes([.png, .tiff], owner: nil)
-        pb.setData(png, forType: .png)
-        if let tiff = NSBitmapImageRep(cgImage: out).representation(using: .tiff, properties: [:]) {
-            pb.setData(tiff, forType: .tiff)
+        if pb.setData(png, forType: .png) {
+            if let tiff = NSBitmapImageRep(cgImage: out).representation(using: .tiff, properties: [:]) {
+                pb.setData(tiff, forType: .tiff)
+            }
+        } else {
+            ok = false
+            pb.clearContents() // don't leave other apps an empty declared PNG
+            alert("Couldn't copy the redacted image to the clipboard")
         }
 
         if Prefs.save {
             let dir = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("TinyRedact")
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let f = DateFormatter()
             f.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-            try? png.write(to: dir.appendingPathComponent("Redacted \(f.string(from: Date())).png"))
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try png.write(to: dir.appendingPathComponent("Redacted \(f.string(from: Date())).png"))
+            } catch {
+                ok = false
+                alert("Couldn't save to Pictures/TinyRedact", error.localizedDescription)
+            }
         }
 
-        NSSound(named: NSSound.Name("Pop"))?.play()
+        if ok { NSSound(named: NSSound.Name("Pop"))?.play() }
     }
 
     // MARK: - UI bits

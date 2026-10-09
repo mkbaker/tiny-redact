@@ -16,6 +16,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp .build/release/TinyRedact "$APP/Contents/MacOS/TinyRedact"
 
+# CFBundleIdentifier must match Prefs.appDomain in Settings.swift, or the --redact CLI reads different settings.
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

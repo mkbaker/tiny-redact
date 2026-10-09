@@ -127,7 +127,7 @@ private struct BoxView: View {
 @MainActor
 final class ReviewWindowController: NSWindowController, NSWindowDelegate {
     private var completion: ((ReviewModel?) -> Void)?
-    private let model: ReviewModel
+    let model: ReviewModel
 
     init(model: ReviewModel, completion: @escaping (ReviewModel?) -> Void) {
         self.model = model

@@ -1,53 +1,88 @@
 import SwiftUI
 
-enum Prefs {
-    private static let d = UserDefaults.standard
+/// A setting's UserDefaults key and its default value — the only place either is written down.
+struct Pref<Value> {
+    let key: String
+    let defaultValue: Value
+}
 
-    static func register() {
-        d.register(defaults: [
-            "names": true, "nameHeuristics": true, "emails": true, "phones": true, "addresses": false,
-            "propagate": true, "labels": true, "review": true, "save": false,
-            "alwaysRedact": "", "neverRedact": "",
-        ])
+enum Prefs {
+    /// Every setting. SettingsView binds to these and `options` reads them, so the two can't drift apart.
+    enum Key {
+        static let names = Pref(key: "names", defaultValue: true)
+        static let nameHeuristics = Pref(key: "nameHeuristics", defaultValue: true)
+        static let emails = Pref(key: "emails", defaultValue: true)
+        static let phones = Pref(key: "phones", defaultValue: true)
+        static let addresses = Pref(key: "addresses", defaultValue: false)
+        static let propagate = Pref(key: "propagate", defaultValue: true)
+        static let labels = Pref(key: "labels", defaultValue: true)
+        static let review = Pref(key: "review", defaultValue: true)
+        static let save = Pref(key: "save", defaultValue: false)
+        static let alwaysRedact = Pref(key: "alwaysRedact", defaultValue: "")
+        static let neverRedact = Pref(key: "neverRedact", defaultValue: "")
     }
+
+    /// The app bundle's CFBundleIdentifier (set in build.sh), which is also its defaults domain.
+    static let appDomain = "com.local.tinyredact"
+
+    /// The bare `.build/release/TinyRedact` used for `--redact` has no bundle id, so `.standard` would be a
+    /// separate "TinyRedact" domain. Read the app's domain explicitly so the CLI sees the same settings.
+    static let store: UserDefaults = Bundle.main.bundleIdentifier == nil
+        ? UserDefaults(suiteName: appDomain) ?? .standard
+        : .standard
 
     static var options: DetectorOptions {
         DetectorOptions(
-            names: d.bool(forKey: "names"),
-            nameHeuristics: d.bool(forKey: "nameHeuristics"),
-            emails: d.bool(forKey: "emails"),
-            phones: d.bool(forKey: "phones"),
-            addresses: d.bool(forKey: "addresses"),
-            propagate: d.bool(forKey: "propagate"),
-            alwaysRedact: list("alwaysRedact"),
-            neverRedact: list("neverRedact")
+            names: value(Key.names),
+            nameHeuristics: value(Key.nameHeuristics),
+            emails: value(Key.emails),
+            phones: value(Key.phones),
+            addresses: value(Key.addresses),
+            propagate: value(Key.propagate),
+            alwaysRedact: list(Key.alwaysRedact),
+            neverRedact: list(Key.neverRedact)
         )
     }
 
-    static var labels: Bool { d.bool(forKey: "labels") }
-    static var review: Bool { d.bool(forKey: "review") }
-    static var save: Bool { d.bool(forKey: "save") }
+    static var labels: Bool { value(Key.labels) }
+    static var review: Bool { value(Key.review) }
+    static var save: Bool { value(Key.save) }
 
-    private static func list(_ key: String) -> [String] {
-        (d.string(forKey: key) ?? "")
+    /// Unset keys fall back to the Pref's default, the same one @AppStorage uses, so no registration step is needed.
+    /// Set keys go through bool(forKey:) so `defaults write … YES` (stored as a string) still counts as on.
+    private static func value(_ pref: Pref<Bool>) -> Bool {
+        store.object(forKey: pref.key) == nil ? pref.defaultValue : store.bool(forKey: pref.key)
+    }
+
+    private static func list(_ pref: Pref<String>) -> [String] {
+        (store.string(forKey: pref.key) ?? pref.defaultValue)
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
     }
 }
 
+// Same store as Prefs, so the Settings window edits what the detector reads even in an unbundled dev build.
+extension AppStorage where Value == Bool {
+    init(_ pref: Pref<Bool>) { self.init(wrappedValue: pref.defaultValue, pref.key, store: Prefs.store) }
+}
+
+extension AppStorage where Value == String {
+    init(_ pref: Pref<String>) { self.init(wrappedValue: pref.defaultValue, pref.key, store: Prefs.store) }
+}
+
 struct SettingsView: View {
-    @AppStorage("names") private var names = true
-    @AppStorage("nameHeuristics") private var nameHeuristics = true
-    @AppStorage("emails") private var emails = true
-    @AppStorage("phones") private var phones = true
-    @AppStorage("addresses") private var addresses = false
-    @AppStorage("propagate") private var propagate = true
-    @AppStorage("labels") private var labels = true
-    @AppStorage("review") private var review = true
-    @AppStorage("save") private var save = false
-    @AppStorage("alwaysRedact") private var alwaysRedact = ""
-    @AppStorage("neverRedact") private var neverRedact = ""
+    @AppStorage(Prefs.Key.names) private var names: Bool
+    @AppStorage(Prefs.Key.nameHeuristics) private var nameHeuristics: Bool
+    @AppStorage(Prefs.Key.emails) private var emails: Bool
+    @AppStorage(Prefs.Key.phones) private var phones: Bool
+    @AppStorage(Prefs.Key.addresses) private var addresses: Bool
+    @AppStorage(Prefs.Key.propagate) private var propagate: Bool
+    @AppStorage(Prefs.Key.labels) private var labels: Bool
+    @AppStorage(Prefs.Key.review) private var review: Bool
+    @AppStorage(Prefs.Key.save) private var save: Bool
+    @AppStorage(Prefs.Key.alwaysRedact) private var alwaysRedact: String
+    @AppStorage(Prefs.Key.neverRedact) private var neverRedact: String
 
     var body: some View {
         Form {

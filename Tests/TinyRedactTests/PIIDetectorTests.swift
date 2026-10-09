@@ -29,6 +29,70 @@ final class PIIDetectorTests: XCTestCase {
         XCTAssertEqual(dets[7].label, "Redacted")
     }
 
+    // MARK: - Capitalized-name heuristic
+
+    private func runs(_ s: String) -> [String] {
+        PIIDetector.nameRuns(in: s).map { String(s[$0]) }
+    }
+
+    func testNameRuns() {
+        XCTAssertEqual(runs("Jane Doe"), ["Jane Doe"])
+        XCTAssertEqual(runs("Mary J. Smith"), ["Mary J. Smith"])
+        XCTAssertEqual(runs("Doe, Jane"), ["Doe, Jane"])
+        XCTAssertEqual(runs("Doe, Jane M."), ["Doe, Jane M."])
+        XCTAssertEqual(runs("Assigned to Jane Doe"), ["Jane Doe"], "stop words break the run")
+        XCTAssertEqual(runs("Jane"), [], "one word alone is too weak a signal")
+        XCTAssertEqual(runs("ORDER STATUS"), [], "all-caps headers are skipped")
+    }
+
+    /// #6: a comma-separated list must not be dropped (too many words) or merged into one person.
+    func testCommaSeparatedListSplitsIntoPeople() {
+        XCTAssertEqual(runs("Jane Doe, John Smith, Bob Lee"), ["Jane Doe", "John Smith", "Bob Lee"])
+        XCTAssertEqual(runs("Jane Doe, John Smith"), ["Jane Doe", "John Smith"])
+        XCTAssertEqual(runs("CC: Mary J. Smith, Bob Lee"), ["Mary J. Smith", "Bob Lee"])
+        XCTAssertEqual(runs("Jane Doe, John Smith (owner)"), ["Jane Doe", "John Smith"])
+        XCTAssertEqual(runs("Jane Doe, John Smith, Bob"), ["Jane Doe", "John Smith", "Bob"])
+        XCTAssertEqual(runs("Jane Doe, John, Bob Lee, Ann"), ["Jane Doe", "John", "Bob Lee", "Ann"])
+    }
+
+    func testSplitListGetsSeparateLabels() {
+        let s = "Jane Doe, John Smith"
+        var dets = PIIDetector.nameRuns(in: s).map { Detection(rect: .zero, kind: .name, text: String(s[$0])) }
+        dets.append(Detection(rect: .zero, kind: .name, text: "Smith"))
+        PIIDetector.assignLabels(&dets)
+
+        XCTAssertNotEqual(dets[0].label, dets[1].label)
+        XCTAssertEqual(dets[2].label, dets[1].label, "Smith is John Smith, not Jane Doe")
+    }
+
+    // MARK: - Propagation
+
+    /// #9: parts of an Always-redact term are hidden elsewhere too, but not labelled as a person.
+    func testPropagatedTokensKeepTheirSourceKind() {
+        let dets = [
+            Detection(rect: .zero, kind: .custom, text: "Acme Corp"),
+            Detection(rect: .zero, kind: .name, text: "Jane Doe"),
+            Detection(rect: .zero, kind: .custom, text: "Jane Industries"),
+            Detection(rect: .zero, kind: .email, text: "Bob@example.com"),
+        ]
+        let tokens = PIIDetector.propagationTokens(from: dets, never: ["industries"])
+
+        XCTAssertEqual(tokens, ["Acme": .custom, "Corp": .custom, "Jane": .name, "Doe": .name])
+    }
+
+    func testPropagatedCustomTermIsLabelledRedacted() throws {
+        var options = DetectorOptions()
+        options.alwaysRedact = ["Acme Corp"]
+        let (image, rectOf) = TestImages.text(["Contact Acme Corp or Acme support"])
+        let dets = try PIIDetector.detect(in: image, options: options)
+
+        let bare = rectOf("Acme support", 0)
+        let hit = try XCTUnwrap(dets.first { $0.rect.contains(CGPoint(x: bare.minX + 10, y: bare.midY)) },
+                                "bare Acme is not covered")
+        XCTAssertEqual(hit.label, "Redacted")
+        XCTAssertFalse(dets.contains { $0.label.hasPrefix("Person") }, "\(dets.map { ($0.text, $0.label) })")
+    }
+
     // MARK: - Overlapping boxes (#1)
 
     func testNearDuplicateGrowsTheExistingBox() {

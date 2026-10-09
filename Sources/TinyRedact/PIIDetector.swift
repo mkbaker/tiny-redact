@@ -4,13 +4,14 @@ import Vision
 import NaturalLanguage
 
 /// Everything the detector needs, snapshotted from settings so it can run off the main thread.
+/// `DetectorOptions()` matches a fresh install's settings.
 struct DetectorOptions {
-    var names = true            // Apple's on-device named-entity tagger
-    var nameHeuristics = true   // "Two or more Capitalized Words" fallback for UI text with no context
-    var emails = true
-    var phones = true
-    var addresses = false
-    var propagate = true        // once "Jane Doe" is found, also hide a bare "Jane" elsewhere
+    var names = Prefs.Key.names.defaultValue                    // Apple's on-device named-entity tagger
+    var nameHeuristics = Prefs.Key.nameHeuristics.defaultValue  // "Capitalized Words" fallback for UI text
+    var emails = Prefs.Key.emails.defaultValue
+    var phones = Prefs.Key.phones.defaultValue
+    var addresses = Prefs.Key.addresses.defaultValue
+    var propagate = Prefs.Key.propagate.defaultValue            // once "Jane Doe" is found, also hide a bare "Jane"
     var alwaysRedact: [String] = []
     var neverRedact: [String] = []
 }
@@ -109,25 +110,7 @@ enum PIIDetector {
         // 3. Heuristic: runs of 2–4 Capitalized Words that aren't common UI words ("Jane Doe", "Doe, Jane").
         if options.nameHeuristics {
             for line in lines {
-                let s = line.text
-                var run: [Range<String.Index>] = []
-                func flush() {
-                    let real = run.filter { !s[$0].hasSuffix(".") } // ignore middle initials in the count
-                    if (2...4).contains(real.count), let f = run.first, let l = run.last {
-                        add(line, f.lowerBound..<l.upperBound, .name)
-                    }
-                    run.removeAll()
-                }
-                for w in ranges(of: capitalizedWord, in: s) {
-                    if stopWords.contains(s[w].lowercased()) { flush(); continue }
-                    if let last = run.last {
-                        let gap = s[last.upperBound..<w.lowerBound]
-                        if gap == " " || gap == "  " || gap == ", " { run.append(w); continue }
-                        flush()
-                    }
-                    run.append(w)
-                }
-                flush()
+                for r in nameRuns(in: line.text) { add(line, r, .name) }
             }
         }
 
@@ -155,25 +138,81 @@ enum PIIDetector {
 
         // 6. Propagate: hide every other occurrence of any name token we found.
         if options.propagate {
-            var tokens = Set<String>()
-            for d in out where d.kind == .name || d.kind == .custom {
-                for t in d.text.split(whereSeparator: { $0 == " " || $0 == "," }) {
-                    let tok = t.trimmingCharacters(in: .punctuationCharacters)
-                    guard tok.count >= 3, tok.first?.isUppercase == true,
-                          !stopWords.contains(tok.lowercased()), !never.contains(tok.lowercased()) else { continue }
-                    tokens.insert(tok)
-                }
-            }
-            for tok in tokens {
+            for (tok, kind) in propagationTokens(from: out, never: never) {
                 let pattern = "(?<![\\p{L}])" + NSRegularExpression.escapedPattern(for: tok) + "(?![\\p{L}])"
                 for line in lines {
-                    for r in ranges(of: pattern, in: line.text) { add(line, r, .name) }
+                    for r in ranges(of: pattern, in: line.text) { add(line, r, kind) }
                 }
             }
         }
 
         assignLabels(&out)
         return out
+    }
+
+    // MARK: - Capitalized-name heuristic
+
+    /// Runs of 2–4 Capitalized Words that aren't stop words: "Jane Doe", "Mary J. Smith", inverted "Doe, Jane".
+    /// ", " joins words so the inverted form works, but a list like "Jane Doe, John Smith, Bob Lee" is split
+    /// back into one run per person rather than becoming one oversized run.
+    static func nameRuns(in s: String) -> [Range<String.Index>] {
+        var out: [Range<String.Index>] = []
+        var run: [Range<String.Index>] = []
+        var commas: [Int] = [] // indices into `run` of words that follow a ", "
+
+        func realCount(_ words: ArraySlice<Range<String.Index>>) -> Int {
+            words.filter { !s[$0].hasSuffix(".") }.count // ignore middle initials in the count
+        }
+        func emit(_ words: ArraySlice<Range<String.Index>>, minWords: Int = 2) {
+            if (minWords...4).contains(realCount(words)), let f = words.first, let l = words.last {
+                out.append(f.lowerBound..<l.upperBound)
+            }
+        }
+        func flush() {
+            let bounds = [0] + commas + [run.count]
+            let segments = zip(bounds, bounds.dropFirst()).map { run[$0..<$1] }
+            let fullNames = segments.filter { realCount($0) >= 2 }.count
+            // More than one full name, or too many words for one person: it's a list, not "Last, First".
+            if fullNames > 1 || realCount(run[...]) > 4 {
+                // Next to a full name, a lone word in the list is a person too ("Jane Doe, John Smith, Bob").
+                for seg in segments { emit(seg, minWords: fullNames > 0 ? 1 : 2) }
+            } else {
+                emit(run[...])
+            }
+            run.removeAll()
+            commas.removeAll()
+        }
+
+        for w in ranges(of: capitalizedWord, in: s) {
+            if stopWords.contains(s[w].lowercased()) { flush(); continue }
+            if let last = run.last {
+                let gap = s[last.upperBound..<w.lowerBound]
+                if gap == ", " { commas.append(run.count) }
+                if gap == " " || gap == "  " || gap == ", " { run.append(w); continue }
+                flush()
+            }
+            run.append(w)
+        }
+        flush()
+        return out
+    }
+
+    // MARK: - Propagation
+
+    /// The name-like tokens of every name and Always-redact term found, each with the kind its matches get.
+    /// A bare "Acme" from an Always-redact "Acme Corp" stays `.custom` (labelled "Redacted"), so it isn't
+    /// mistaken for a new person. A token that is also part of a name stays `.name`.
+    static func propagationTokens(from dets: [Detection], never: Set<String>) -> [String: Detection.Kind] {
+        var tokens: [String: Detection.Kind] = [:]
+        for d in dets where d.kind == .name || d.kind == .custom {
+            for t in d.text.split(whereSeparator: { $0 == " " || $0 == "," }) {
+                let tok = t.trimmingCharacters(in: .punctuationCharacters)
+                guard tok.count >= 3, tok.first?.isUppercase == true,
+                      !stopWords.contains(tok.lowercased()), !never.contains(tok.lowercased()) else { continue }
+                if tokens[tok] != .name { tokens[tok] = d.kind }
+            }
+        }
+        return tokens
     }
 
     // MARK: - OCR
