@@ -18,7 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setIcon(busy: false)
 
         let menu = NSMenu()
-        menu.addItem(item("Capture Redacted Screenshot", #selector(captureRegion), "r", [.control, .option, .command]))
+        let capture = item("Capture Redacted Screenshot", #selector(captureRegion), "r", [.control, .option, .command])
+        menu.addItem(capture)
         menu.addItem(item("Redact Image on Clipboard", #selector(redactClipboard)))
         menu.addItem(item("Redact Image File…", #selector(redactFile)))
         menu.addItem(.separator())
@@ -28,6 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotKey = HotKey(keyCode: UInt32(kVK_ANSI_R), modifiers: UInt32(cmdKey | optionKey | controlKey)) { [weak self] in
             self?.captureRegion()
+        }
+        // Say so where the shortcut is advertised rather than having it silently do nothing.
+        if hotKey == nil {
+            capture.title += " (⌃⌥⌘R unavailable)"
+        } else if hotKey?.shared == true {
+            capture.title += " (⌃⌥⌘R may be taken by another app)"
         }
 
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
@@ -50,12 +57,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         // -i interactive (drag a region, Space toggles window mode, Esc cancels), -x no sound
         p.arguments = ["-i", "-x", url.path]
-        p.terminationHandler = { [weak self] _ in
+        p.terminationHandler = { [weak self] process in
+            // screencapture exits 1 when the user presses Esc, so only a crash or any other status is a failure.
+            let failed = process.terminationReason == .uncaughtSignal || ![0, 1].contains(process.terminationStatus)
+            let status = process.terminationStatus
             Task { @MainActor in
                 // Read the original into memory, then delete it right away so it never lingers on disk.
                 let image = ImageLoader.load(url)
                 try? FileManager.default.removeItem(at: url)
-                if let image { self?.process(image) } else { self?.busy = false } // nil = user pressed Esc
+                if let image { self?.process(image); return }
+                self?.busy = false
+                if failed {
+                    self?.alert("Screen capture failed",
+                                "screencapture stopped unexpectedly (status \(status)). Check Screen Recording permission in System Settings → Privacy & Security.")
+                }
             }
         }
         do { try p.run() } catch {
