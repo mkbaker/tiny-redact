@@ -61,6 +61,9 @@ Development identity: `SIGN_ID="Apple Development: …" ./build.sh` (list yours 
 
 To open it in Xcode instead: `open Package.swift`.
 
+Run the tests with `swift test`. They use XCTest, so they need full Xcode, not just the Command Line Tools. CI runs
+them on every pull request.
+
 ## Test the detector without the UI
 
 ```bash
@@ -82,6 +85,7 @@ Sources/TinyRedact/
   Settings.swift        preferences + settings window
   HotKey.swift          global ⌃⌥⌘R via Carbon (no Accessibility permission needed)
   CLI.swift             --redact mode
+Tests/TinyRedactTests/  redaction pixels, labels, and end-to-end detection on rendered text
 ```
 
 Region selection uses macOS's own `screencapture -i`, so it behaves exactly like ⌘⇧4 (including Space for window mode).
