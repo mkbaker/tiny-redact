@@ -1,7 +1,14 @@
 import SwiftUI
 
 enum Prefs {
-    private static let d = UserDefaults.standard
+    /// The app bundle's CFBundleIdentifier (set in build.sh), which is also its defaults domain.
+    static let appDomain = "com.local.tinyredact"
+
+    /// The bare `.build/release/TinyRedact` used for `--redact` has no bundle id, so `.standard` would be a
+    /// separate "TinyRedact" domain. Read the app's domain explicitly so the CLI sees the same settings.
+    private static let d: UserDefaults = Bundle.main.bundleIdentifier == nil
+        ? UserDefaults(suiteName: appDomain) ?? .standard
+        : .standard
 
     static func register() {
         d.register(defaults: [
