@@ -109,25 +109,7 @@ enum PIIDetector {
         // 3. Heuristic: runs of 2–4 Capitalized Words that aren't common UI words ("Jane Doe", "Doe, Jane").
         if options.nameHeuristics {
             for line in lines {
-                let s = line.text
-                var run: [Range<String.Index>] = []
-                func flush() {
-                    let real = run.filter { !s[$0].hasSuffix(".") } // ignore middle initials in the count
-                    if (2...4).contains(real.count), let f = run.first, let l = run.last {
-                        add(line, f.lowerBound..<l.upperBound, .name)
-                    }
-                    run.removeAll()
-                }
-                for w in ranges(of: capitalizedWord, in: s) {
-                    if stopWords.contains(s[w].lowercased()) { flush(); continue }
-                    if let last = run.last {
-                        let gap = s[last.upperBound..<w.lowerBound]
-                        if gap == " " || gap == "  " || gap == ", " { run.append(w); continue }
-                        flush()
-                    }
-                    run.append(w)
-                }
-                flush()
+                for r in nameRuns(in: line.text) { add(line, r, .name) }
             }
         }
 
@@ -173,6 +155,53 @@ enum PIIDetector {
         }
 
         assignLabels(&out)
+        return out
+    }
+
+    // MARK: - Capitalized-name heuristic
+
+    /// Runs of 2–4 Capitalized Words that aren't stop words: "Jane Doe", "Mary J. Smith", inverted "Doe, Jane".
+    /// ", " joins words so the inverted form works, but a list like "Jane Doe, John Smith, Bob Lee" is split
+    /// back into one run per person rather than becoming one oversized run.
+    static func nameRuns(in s: String) -> [Range<String.Index>] {
+        var out: [Range<String.Index>] = []
+        var run: [Range<String.Index>] = []
+        var commas: [Int] = [] // indices into `run` of words that follow a ", "
+
+        func realCount(_ words: ArraySlice<Range<String.Index>>) -> Int {
+            words.filter { !s[$0].hasSuffix(".") }.count // ignore middle initials in the count
+        }
+        func emit(_ words: ArraySlice<Range<String.Index>>, minWords: Int = 2) {
+            if (minWords...4).contains(realCount(words)), let f = words.first, let l = words.last {
+                out.append(f.lowerBound..<l.upperBound)
+            }
+        }
+        func flush() {
+            let bounds = [0] + commas + [run.count]
+            let segments = zip(bounds, bounds.dropFirst()).map { run[$0..<$1] }
+            let fullNames = segments.filter { realCount($0) >= 2 }.count
+            // More than one full name, or too many words for one person: it's a list, not "Last, First".
+            if fullNames > 1 || realCount(run[...]) > 4 {
+                // Next to a full name, a lone word in the list is a person too ("Jane Doe, John Smith, Bob").
+                for seg in segments { emit(seg, minWords: fullNames > 0 ? 1 : 2) }
+            } else {
+                emit(run[...])
+            }
+            run.removeAll()
+            commas.removeAll()
+        }
+
+        for w in ranges(of: capitalizedWord, in: s) {
+            if stopWords.contains(s[w].lowercased()) { flush(); continue }
+            if let last = run.last {
+                let gap = s[last.upperBound..<w.lowerBound]
+                if gap == ", " { commas.append(run.count) }
+                if gap == " " || gap == "  " || gap == ", " { run.append(w); continue }
+                flush()
+            }
+            run.append(w)
+        }
+        flush()
         return out
     }
 
