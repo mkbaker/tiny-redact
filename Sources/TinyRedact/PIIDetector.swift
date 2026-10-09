@@ -138,19 +138,10 @@ enum PIIDetector {
 
         // 6. Propagate: hide every other occurrence of any name token we found.
         if options.propagate {
-            var tokens = Set<String>()
-            for d in out where d.kind == .name || d.kind == .custom {
-                for t in d.text.split(whereSeparator: { $0 == " " || $0 == "," }) {
-                    let tok = t.trimmingCharacters(in: .punctuationCharacters)
-                    guard tok.count >= 3, tok.first?.isUppercase == true,
-                          !stopWords.contains(tok.lowercased()), !never.contains(tok.lowercased()) else { continue }
-                    tokens.insert(tok)
-                }
-            }
-            for tok in tokens {
+            for (tok, kind) in propagationTokens(from: out, never: never) {
                 let pattern = "(?<![\\p{L}])" + NSRegularExpression.escapedPattern(for: tok) + "(?![\\p{L}])"
                 for line in lines {
-                    for r in ranges(of: pattern, in: line.text) { add(line, r, .name) }
+                    for r in ranges(of: pattern, in: line.text) { add(line, r, kind) }
                 }
             }
         }
@@ -204,6 +195,24 @@ enum PIIDetector {
         }
         flush()
         return out
+    }
+
+    // MARK: - Propagation
+
+    /// The name-like tokens of every name and Always-redact term found, each with the kind its matches get.
+    /// A bare "Acme" from an Always-redact "Acme Corp" stays `.custom` (labelled "Redacted"), so it isn't
+    /// mistaken for a new person. A token that is also part of a name stays `.name`.
+    static func propagationTokens(from dets: [Detection], never: Set<String>) -> [String: Detection.Kind] {
+        var tokens: [String: Detection.Kind] = [:]
+        for d in dets where d.kind == .name || d.kind == .custom {
+            for t in d.text.split(whereSeparator: { $0 == " " || $0 == "," }) {
+                let tok = t.trimmingCharacters(in: .punctuationCharacters)
+                guard tok.count >= 3, tok.first?.isUppercase == true,
+                      !stopWords.contains(tok.lowercased()), !never.contains(tok.lowercased()) else { continue }
+                if tokens[tok] != .name { tokens[tok] = d.kind }
+            }
+        }
+        return tokens
     }
 
     // MARK: - OCR

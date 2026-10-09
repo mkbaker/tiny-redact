@@ -65,6 +65,34 @@ final class PIIDetectorTests: XCTestCase {
         XCTAssertEqual(dets[2].label, dets[1].label, "Smith is John Smith, not Jane Doe")
     }
 
+    // MARK: - Propagation
+
+    /// #9: parts of an Always-redact term are hidden elsewhere too, but not labelled as a person.
+    func testPropagatedTokensKeepTheirSourceKind() {
+        let dets = [
+            Detection(rect: .zero, kind: .custom, text: "Acme Corp"),
+            Detection(rect: .zero, kind: .name, text: "Jane Doe"),
+            Detection(rect: .zero, kind: .custom, text: "Jane Industries"),
+            Detection(rect: .zero, kind: .email, text: "Bob@example.com"),
+        ]
+        let tokens = PIIDetector.propagationTokens(from: dets, never: ["industries"])
+
+        XCTAssertEqual(tokens, ["Acme": .custom, "Corp": .custom, "Jane": .name, "Doe": .name])
+    }
+
+    func testPropagatedCustomTermIsLabelledRedacted() throws {
+        var options = DetectorOptions()
+        options.alwaysRedact = ["Acme Corp"]
+        let (image, rectOf) = TestImages.text(["Contact Acme Corp or Acme support"])
+        let dets = try PIIDetector.detect(in: image, options: options)
+
+        let bare = rectOf("Acme support", 0)
+        let hit = try XCTUnwrap(dets.first { $0.rect.contains(CGPoint(x: bare.minX + 10, y: bare.midY)) },
+                                "bare Acme is not covered")
+        XCTAssertEqual(hit.label, "Redacted")
+        XCTAssertFalse(dets.contains { $0.label.hasPrefix("Person") }, "\(dets.map { ($0.text, $0.label) })")
+    }
+
     // MARK: - Overlapping boxes (#1)
 
     func testNearDuplicateGrowsTheExistingBox() {
