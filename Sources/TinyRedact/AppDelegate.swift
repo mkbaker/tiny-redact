@@ -91,10 +91,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setIcon(busy: true)
         let options = Prefs.options
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let detections = (try? PIIDetector.detect(in: image, options: options)) ?? []
+            // Fail closed: if OCR breaks we know nothing about the image, so never hand it on as if it were clean.
+            let result = Result { try PIIDetector.detect(in: image, options: options) }
             Task { @MainActor in
                 self?.setIcon(busy: false)
-                self?.present(image, detections)
+                switch result {
+                case .success(let detections):
+                    self?.present(image, detections)
+                case .failure(let error):
+                    self?.alert("Text recognition failed — nothing was copied", error.localizedDescription)
+                }
             }
         }
     }
