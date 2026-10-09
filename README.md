@@ -50,14 +50,33 @@ Requires macOS 14+ and Xcode or the Command Line Tools.
 
 ```bash
 ./build.sh
-open build/TinyRedact.app
+cp -R build/TinyRedact.app /Applications/
+open /Applications/TinyRedact.app
 ```
+
+TinyRedact lives only in the menu bar: no Dock icon, no window. Look for the eye-slash icon near the clock. If your menu
+bar is full, macOS may hide it behind the notch; ⌃⌥⌘R still works.
 
 On first capture macOS asks for **Screen Recording** permission (System Settings → Privacy & Security → Screen & System
 Audio Recording). Turn it on, then quit and reopen TinyRedact.
 
-Ad-hoc signed builds may get re-prompted for that permission after every rebuild. To avoid it, sign with any Apple
-Development identity: `SIGN_ID="Apple Development: …" ./build.sh` (list yours with `security find-identity -p codesigning`).
+**Updating:** quit TinyRedact, pull, run `./build.sh`, then copy it to `/Applications` again.
+
+### "TinyRedact needs Screen Recording permission" even though it's switched on
+
+`build.sh` signs ad-hoc by default, so every rebuild gets a new code signature, and macOS ties the permission to the
+signature. The toggle you see belongs to the previous build. Reset it and grant it again:
+
+1. Quit TinyRedact.
+2. Run `tccutil reset ScreenCapture com.local.tinyredact`, or select TinyRedact in that list and click **–**.
+3. Open TinyRedact, press ⌃⌥⌘R, and allow the prompt.
+4. Quit and reopen TinyRedact.
+
+To stop this happening after every rebuild, sign every build with the same identity. Any Apple Development certificate
+works (list yours with `security find-identity -p codesigning`), and so does a free self-signed one: in Keychain Access,
+choose *Certificate Assistant → Create a Certificate…*, set Identity Type to *Self Signed Root* and Certificate Type to
+*Code Signing*, then build with `SIGN_ID="<certificate name>" ./build.sh`. Do the reset once after the first signed build;
+later rebuilds keep the permission.
 
 To open it in Xcode instead: `open Package.swift`.
 
