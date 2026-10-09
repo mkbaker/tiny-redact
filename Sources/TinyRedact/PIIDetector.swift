@@ -4,13 +4,14 @@ import Vision
 import NaturalLanguage
 
 /// Everything the detector needs, snapshotted from settings so it can run off the main thread.
+/// `DetectorOptions()` matches a fresh install's settings.
 struct DetectorOptions {
-    var names = true            // Apple's on-device named-entity tagger
-    var nameHeuristics = true   // "Two or more Capitalized Words" fallback for UI text with no context
-    var emails = true
-    var phones = true
-    var addresses = false
-    var propagate = true        // once "Jane Doe" is found, also hide a bare "Jane" elsewhere
+    var names = Prefs.Key.names.defaultValue                    // Apple's on-device named-entity tagger
+    var nameHeuristics = Prefs.Key.nameHeuristics.defaultValue  // "Capitalized Words" fallback for UI text
+    var emails = Prefs.Key.emails.defaultValue
+    var phones = Prefs.Key.phones.defaultValue
+    var addresses = Prefs.Key.addresses.defaultValue
+    var propagate = Prefs.Key.propagate.defaultValue            // once "Jane Doe" is found, also hide a bare "Jane"
     var alwaysRedact: [String] = []
     var neverRedact: [String] = []
 }

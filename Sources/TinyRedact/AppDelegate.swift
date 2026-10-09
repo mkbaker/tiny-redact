@@ -12,7 +12,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var busy = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Prefs.register()
         installEditMenu()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
