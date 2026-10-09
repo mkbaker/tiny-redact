@@ -139,25 +139,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func deliver(_ image: CGImage, _ detections: [Detection], labels: Bool) {
         guard let out = Redactor.render(image, detections: detections, drawLabels: labels),
               let png = Redactor.png(out)
-        else { NSSound.beep(); return }
+        else { alert("Couldn't create the redacted image — nothing was copied"); return }
 
+        // The Pop means "it's on your clipboard (and saved)", so only play it when every step worked.
+        var ok = true
         let pb = NSPasteboard.general
         pb.declareTypes([.png, .tiff], owner: nil)
-        pb.setData(png, forType: .png)
-        if let tiff = NSBitmapImageRep(cgImage: out).representation(using: .tiff, properties: [:]) {
-            pb.setData(tiff, forType: .tiff)
+        if pb.setData(png, forType: .png) {
+            if let tiff = NSBitmapImageRep(cgImage: out).representation(using: .tiff, properties: [:]) {
+                pb.setData(tiff, forType: .tiff)
+            }
+        } else {
+            ok = false
+            pb.clearContents() // don't leave other apps an empty declared PNG
+            alert("Couldn't copy the redacted image to the clipboard")
         }
 
         if Prefs.save {
             let dir = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("TinyRedact")
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let f = DateFormatter()
             f.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-            try? png.write(to: dir.appendingPathComponent("Redacted \(f.string(from: Date())).png"))
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try png.write(to: dir.appendingPathComponent("Redacted \(f.string(from: Date())).png"))
+            } catch {
+                ok = false
+                alert("Couldn't save to Pictures/TinyRedact", error.localizedDescription)
+            }
         }
 
-        NSSound(named: NSSound.Name("Pop"))?.play()
+        if ok { NSSound(named: NSSound.Name("Pop"))?.play() }
     }
 
     // MARK: - UI bits
