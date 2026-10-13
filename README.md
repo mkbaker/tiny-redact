@@ -52,8 +52,9 @@ usernames/handles are the usual gaps. That's why the review step is on by defaul
    scroll to the Security section and click **Open Anyway**, or run
    `xattr -dr com.apple.quarantine /Applications/TinyRedact.app` once.
 
-Requires macOS 14+ on an Apple Silicon Mac. After updating to a new release, you may need to re-grant Screen Recording
-permission — see [the fix below](#tinyredact-needs-screen-recording-permission-even-though-its-switched-on).
+Requires macOS 14+ on an Apple Silicon Mac. Releases are signed with a fixed certificate, so updating keeps your Screen
+Recording permission. If you're moving from v0.1.0 or from a copy you built yourself, reset it once — see
+[the fix below](#tinyredact-needs-screen-recording-permission-even-though-its-switched-on).
 
 To build from source instead, see below.
 
