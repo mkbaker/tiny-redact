@@ -3,6 +3,7 @@
 #
 #   ./build.sh                 # ad-hoc signed
 #   SIGN_ID="Apple Development: you@example.com (TEAMID)" ./build.sh
+#   VERSION=0.2.0 ./build.sh   # stamp the bundle version (used by the release workflow)
 #
 # With ad-hoc signing macOS may ask for Screen Recording permission again after each rebuild.
 # Signing with a real identity (any free Apple Development cert) makes the permission stick.
@@ -35,6 +36,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+# Release builds pass VERSION (e.g. 0.2.0) so the bundle reports the tagged version.
+if [ -n "${VERSION:-}" ]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+fi
 
 codesign --force --sign "${SIGN_ID:--}" "$APP"
 echo "Built $APP"
