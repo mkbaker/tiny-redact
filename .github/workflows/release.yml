@@ -15,7 +15,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift test
+      # Signing with one fixed certificate keeps macOS's Screen Recording permission valid across updates.
+      # Without the secrets (e.g. a fork), fall back to ad-hoc signing.
+      - name: Import signing certificate
+        id: cert
+        env:
+          CERT_P12_BASE64: ${{ secrets.SIGNING_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        run: |
+          if [ -z "$CERT_P12_BASE64" ]; then
+            echo "No signing certificate configured; building ad-hoc signed."
+            exit 0
+          fi
+          export KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          echo "sign_id=$(scripts/import-signing-cert.sh)" >> "$GITHUB_OUTPUT"
       - name: Build
+        env:
+          SIGN_ID: ${{ steps.cert.outputs.sign_id }}
         run: VERSION="${GITHUB_REF_NAME#v}" ./build.sh
       - name: Zip
         run: ditto -c -k --keepParent build/TinyRedact.app TinyRedact.zip

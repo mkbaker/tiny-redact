@@ -48,8 +48,9 @@ usernames/handles are the usual gaps. That's why the review step is on by defaul
 
 1. Download `TinyRedact.zip` from the [latest release](https://github.com/mkbaker/tiny-redact/releases/latest) and unzip it.
 2. Drag `TinyRedact.app` to `/Applications`.
-3. The app isn't notarized, so macOS blocks the first launch. Right-click it, choose **Open**, then **Open** again — or run
-   `xattr -dr com.apple.quarantine /Applications/TinyRedact.app`.
+3. The app isn't notarized, so macOS blocks the first launch. Either open **System Settings → Privacy & Security**,
+   scroll to the Security section and click **Open Anyway**, or run
+   `xattr -dr com.apple.quarantine /Applications/TinyRedact.app` once.
 
 Requires macOS 14+ on an Apple Silicon Mac. After updating to a new release, you may need to re-grant Screen Recording
 permission — see [the fix below](#tinyredact-needs-screen-recording-permission-even-though-its-switched-on).
@@ -120,3 +121,16 @@ Tests/TinyRedactTests/  redaction pixels, labels, and end-to-end detection on re
 ```
 
 Region selection uses macOS's own `screencapture -i`, so it behaves exactly like ⌘⇧4 (including Space for window mode).
+
+## Releasing
+
+Pushing a tag like `v0.2.0` builds and publishes a release (see `.github/workflows/release.yml`). Releases are signed
+with one fixed certificate so macOS keeps the Screen Recording permission across updates. Set it up once:
+
+1. In Keychain Access, choose *Certificate Assistant → Create a Certificate…*, set Identity Type to *Self Signed Root*,
+   Certificate Type to *Code Signing*, tick *Let me override defaults*, and set a long validity (e.g. 3650 days).
+2. Right-click the certificate → *Export…* as a `.p12` with a password.
+3. Add two repository secrets: `SIGNING_CERT_P12_BASE64` (output of `base64 -i cert.p12`) and `SIGNING_CERT_PASSWORD`.
+
+Keep the `.p12` safe: replacing the certificate changes the signature, and everyone has to re-grant the permission once.
+Without the secrets the workflow falls back to ad-hoc signing.
