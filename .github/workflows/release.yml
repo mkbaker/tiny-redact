@@ -1,0 +1,27 @@
+name: Release
+
+# Push a tag like v0.2.0 to build the app and publish it as a GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+      - name: Build
+        run: VERSION="${GITHUB_REF_NAME#v}" ./build.sh
+      - name: Zip
+        run: ditto -c -k --keepParent build/TinyRedact.app TinyRedact.zip
+      - name: Checksum
+        run: shasum -a 256 TinyRedact.zip | tee TinyRedact.zip.sha256
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" TinyRedact.zip TinyRedact.zip.sha256 --title "$GITHUB_REF_NAME" --generate-notes

@@ -44,6 +44,15 @@ no metadata from the original.
 **Automatic detection will miss things.** Single first names with no context, names in odd fonts, ALL-CAPS names, and
 usernames/handles are the usual gaps. That's why the review step is on by default — glance before you hit Return.
 
+## Install
+
+1. Download `TinyRedact.zip` from the [latest release](https://github.com/mkbaker/tiny-redact/releases/latest) and unzip it.
+2. Drag `TinyRedact.app` to `/Applications`.
+3. The app isn't notarized, so macOS blocks the first launch. Right-click it, choose **Open**, then **Open** again — or run
+   `xattr -dr com.apple.quarantine /Applications/TinyRedact.app`.
+
+Requires macOS 14+. To build from source instead, see below.
+
 ## Build
 
 Requires macOS 14+ and Xcode or the Command Line Tools.
